@@ -1,0 +1,403 @@
+{% extends "base.html" %}
+
+{% block title %}Project VizTree - {{ project_name }}{% endblock %}
+
+{% block header_title %}Project VizTree{% endblock %}
+
+{% block header_subtitle %}
+<p>Project: {{ project_name }} | Framework: {{ framework.title() }}</p>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .treeview-navigation[role="tree"] { list-style: none; margin: 0; padding: 0; }
+  .treeview-navigation [role="group"] { list-style: none; margin: 0 0 0 1rem; padding: 0 0 0 .5rem; }
+  .treeview-navigation a[role="treeitem"] { display: block; padding: .375rem .5rem; text-decoration: none; border-radius: .25rem; }
+  .treeview-navigation a[role="treeitem"]:hover { background-color: rgba(13,110,253,.08); }
+  .treeview-navigation .label { display: inline-flex; align-items: center; gap: .5rem; }
+  .treeview-navigation .chevron { display: inline-flex; width: 13px; height: 10px; color: currentColor; transition: transform 150ms ease; }
+  /* Divider lines: solid for folders, dotted for files */
+  .treeview-navigation a.tree-folder { border-bottom: 1px solid var(--bs-border-color); }
+  .treeview-navigation a.tree-file { border-bottom: 1px dotted var(--bs-border-color); }
+  .treeview-navigation a[role="treeitem"][aria-expanded="false"] > .label .chevron svg { transform: rotate(270deg) translate(2px, 2px); }
+  .treeview-navigation a[role="treeitem"][aria-expanded="true"] + [role="group"] { display: block; }
+  .treeview-navigation a[role="treeitem"][aria-expanded="false"] + [role="group"] { display: none; }
+  .muted { opacity: .8; font-size: .875rem; }
+  .treeview-navigation .label i.bi { transition: transform .12s ease, color .12s ease; }
+  .treeview-navigation a[role="treeitem"]:hover .label i.bi { transform: translateY(-1px); }
+  /* Code viewer with line numbers */
+  .code-ol { list-style: decimal; margin: 0; padding: .75rem .75rem .75rem 3rem; max-height: 60vh; overflow: auto; border-radius: 12px; }
+  .code-ol li { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; line-height: 1.4; }
+  .code-ol.wrap li { white-space: pre-wrap; word-break: break-word; }
+  .code-ol li::marker { color: var(--bs-secondary-color); }
+  .md-body { max-height: 60vh; overflow: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <div class="col-12 col-lg-4">
+    <div class="card shadow-sm neu-surface">
+      <div class="card-header gradient-brand text-white d-flex align-items-center justify-content-between neu-surface" style="box-shadow:none;">
+        <span class="d-inline-flex align-items-center"><i class="bi bi-diagram-3 me-2"></i> Project Tree <span id="tree_counts" class="badge rounded-pill bg-warning text-dark ms-2"></span></span>
+        <div class="btn-group btn-group-sm" role="group">
+          <button id="btnToggleAll" class="btn btn-light text-dark neu-btn" data-bs-toggle="tooltip" title="Expand all"><i class="bi bi-arrows-angle-expand"></i></button>
+        </div>
+      </div>
+      <div class="card-body neu-surface">
+        <div class="input-group input-group-sm mb-2 neu-inset" style="border-radius:12px;">
+          <span class="input-group-text border-0 bg-transparent"><i class="bi bi-search"></i></span>
+          <input id="treeSearch" type="text" class="form-control neu-input" placeholder="Search files/folders..." />
+        </div>
+        <ul id="tree_root" class="treeview-navigation" role="tree" aria-label="Project Tree"></ul>
+        <div id="tree_status" class="muted mt-2" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-sm neu-surface">
+      <div class="card-header gradient-brand text-white d-flex align-items-center justify-content-between neu-surface" style="box-shadow:none;">
+        <div><i class="bi bi-info-circle me-2 text-primary"></i> Details</div>
+        <div class="btn-group btn-group-sm" role="group">
+          <button id="btnCopy" class="btn btn-outline-light neu-btn me-2" data-bs-toggle="tooltip" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+          <button id="btnRefresh" class="btn btn-outline-light neu-btn me-2" data-bs-toggle="tooltip" title="Copy code"><i class="bi bi-clipboard"></i></button>
+          <button id="btnWrap" class="btn btn-outline-secondary neu-btn" data-bs-toggle="tooltip" title="Toggle wrap"><i class="bi bi-text-wrap"></i></button>
+        </div>
+      </div>
+      <div class="card-body neu-surface">
+        <h5 id="id_page_title" class="card-title">{{ project_name }}</h5>
+        <div class="content">
+          <div class="mb-2 text-muted small">Select a file to preview its contents.</div>
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <i class="bi bi-folder2-open text-warning"></i>
+            <span id="detail_path" class="text-muted small"></span>
+            <span id="detail_meta" class="text-muted small ms-auto"></span>
+          </div>
+          <div id="detail_loader" class="text-center my-3" style="display:none;">
+            <div class="spinner-border text-primary" role="status"></div>
+          </div>
+          <div id="detail_md" class="p-3 neu-inset md-body" style="display:none; border-radius:12px;"></div>
+          <ol id="detail_ol" class="code-ol neu-inset" style="display:none;"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function(){
+    function $(id){ return document.getElementById(id); }
+
+    function buildTree(container, roots){
+      // Build ARIA tree recursively
+      function makeFolderAnchor(label, path, ownsId, expandedDefault){
+        var a = document.createElement('a');
+        a.setAttribute('role', 'treeitem');
+        a.setAttribute('href', '#' + (path || ''));
+        a.setAttribute('aria-expanded', expandedDefault ? 'true' : 'false');
+        a.setAttribute('aria-owns', ownsId);
+        a.tabIndex = -1;
+        a.className = 'tree-folder';
+
+        var span = document.createElement('span');
+        span.className = 'label';
+        var chev = document.createElement('span');
+        chev.className = 'chevron';
+        chev.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="10" viewBox="0 0 13 10"><polygon points="2 1, 12 1, 7 9"></polygon></svg>';
+        var folderIcon = document.createElement('i');
+        folderIcon.className = 'bi bi-folder-fill text-warning';
+        span.appendChild(chev);
+        span.appendChild(folderIcon);
+        var text = document.createElement('span'); text.textContent = label; span.appendChild(text);
+        a.appendChild(span);
+        return a;
+      }
+
+      function fileIconClass(name){
+        var lower = (name || '').toLowerCase();
+        if (lower.endsWith('.py')) return 'bi-filetype-py';
+        if (lower.endsWith('.js')) return 'bi-filetype-js';
+        if (lower.endsWith('.ts')) return 'bi-filetype-ts';
+        if (lower.endsWith('.json')) return 'bi-filetype-json';
+        if (lower.endsWith('.md')) return 'bi-filetype-md';
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'bi-filetype-html';
+        if (lower.endsWith('.css')) return 'bi-filetype-css';
+        if (lower.endsWith('.txt')) return 'bi-filetype-txt';
+        if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'bi-filetype-yml';
+        if (lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.gz') || lower.endsWith('.whl') || lower.endsWith('.7z')) return 'bi-file-zip';
+        if (lower.endsWith('.toml')) return 'bi-filetype-json';
+        if (lower.endsWith('.ini') || lower.endsWith('.cfg')) return 'bi-gear';
+        if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.gif') || lower.endsWith('.svg')) return 'bi-file-image';
+        if (lower.endsWith('.lock')) return 'bi-lock-fill';
+        return 'bi-file-earmark';
+      }
+
+      function fileColorClass(name){
+        var lower = (name || '').toLowerCase();
+        if (lower.endsWith('.py')) return 'text-primary';       // blue
+        if (lower.endsWith('.js')) return 'text-warning';       // yellow
+        if (lower.endsWith('.ts')) return 'text-info';          // cyan
+        if (lower.endsWith('.json')) return 'text-success';     // green
+        if (lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.gz') || lower.endsWith('.whl') || lower.endsWith('.7z')) return 'text-warning';
+        if (lower.endsWith('.md')) return 'text-secondary';     // gray
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text-danger'; // red
+        if (lower.endsWith('.css')) return 'text-info';         // cyan
+        if (lower.endsWith('.txt')) return 'text-muted';        // muted
+        if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'text-warning';
+        if (lower.endsWith('.toml')) return 'text-success';
+        if (lower.endsWith('.ini') || lower.endsWith('.cfg')) return 'text-secondary';
+        if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.gif') || lower.endsWith('.svg')) return 'text-danger';
+        if (lower.endsWith('.lock')) return 'text-muted';
+        return 'text-primary';
+      }
+
+      function makeFileAnchor(label, path){
+        var a = document.createElement('a');
+        a.setAttribute('role', 'treeitem');
+        a.setAttribute('href', '#' + (path || ''));
+        a.tabIndex = -1;
+        a.className = 'tree-file';
+        var span = document.createElement('span');
+        span.className = 'label';
+        var ic = document.createElement('i');
+        ic.className = 'bi ' + fileIconClass(label) + ' ' + fileColorClass(label);
+        span.appendChild(ic);
+        var text = document.createElement('span'); text.textContent = label; span.appendChild(text);
+        a.appendChild(span);
+        return a;
+      }
+
+      function addNode(node, parentUl, depth){
+        var li = document.createElement('li');
+        li.setAttribute('role', 'none');
+        var label = node.value || node.path || node.id;
+        if (node.type === 'folder'){
+          var groupId = 'subtree_' + String(node.id).replace(/[^\w-]/g,'');
+          var a = makeFolderAnchor(label, node.path, groupId, depth === 0);
+          li.appendChild(a);
+          var group = document.createElement('ul');
+          group.id = groupId;
+          group.setAttribute('role', 'group');
+          group.setAttribute('aria-label', label);
+          li.appendChild(group);
+          parentUl.appendChild(li);
+          if (Array.isArray(node.data)){
+            node.data.forEach(function(child){ addNode(child, group, depth + 1); });
+          }
+        } else {
+          var fa = makeFileAnchor(label, node.path);
+          li.appendChild(fa);
+          parentUl.appendChild(li);
+        }
+      }
+
+      container.innerHTML = '';
+      roots.forEach(function(r){ addNode(r, container, 0); });
+
+      // Focus first item
+      var first = container.querySelector('[role="treeitem"]');
+      if (first) first.tabIndex = 0;
+    }
+
+    function attachInteractions(root){
+      root.addEventListener('click', function(e){
+        var a = e.target.closest('a[role="treeitem"]');
+        if (!a || !root.contains(a)) return;
+        var owns = a.getAttribute('aria-owns');
+        if (owns){
+          var expanded = a.getAttribute('aria-expanded') === 'true';
+          a.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+          e.preventDefault();
+        }
+        var label = a.textContent.trim();
+        var path = (a.getAttribute('href') || '').slice(1);
+        var dp = $('detail_path'); if (dp) dp.textContent = path;
+        if (!owns && path){
+          // File clicked: load content
+          loadFile(path);
+        }
+      });
+
+      root.addEventListener('keydown', function(e){
+        var a = e.target.closest('a[role="treeitem"]');
+        if (!a || !root.contains(a)) return;
+        var key = e.key;
+        var owns = a.getAttribute('aria-owns');
+        if (key === 'ArrowRight' && owns){
+          if (a.getAttribute('aria-expanded') !== 'true') a.setAttribute('aria-expanded','true');
+          e.preventDefault();
+        } else if (key === 'ArrowLeft'){
+          if (owns && a.getAttribute('aria-expanded') === 'true'){
+            a.setAttribute('aria-expanded','false');
+          } else {
+            // move to parent treeitem if any
+            var parentTi = a.parentElement && a.parentElement.parentElement && a.parentElement.parentElement.previousElementSibling;
+            if (parentTi && parentTi.getAttribute('role') === 'treeitem'){
+              parentTi.focus(); parentTi.tabIndex = 0; a.tabIndex = -1;
+            }
+          }
+          e.preventDefault();
+        } else if (key === 'Enter' || key === ' '){
+          if (owns){
+            var expanded = a.getAttribute('aria-expanded') === 'true';
+            a.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+            e.preventDefault();
+          }
+        } else if (key === 'ArrowDown' || key === 'ArrowUp'){
+          var items = Array.prototype.slice.call(root.querySelectorAll('a[role="treeitem"]'));
+          var idx = items.indexOf(a);
+          var next = (key === 'ArrowDown') ? items[idx+1] : items[idx-1];
+          if (next){
+            next.focus(); next.tabIndex = 0; a.tabIndex = -1; e.preventDefault();
+          }
+        }
+      });
+    }
+
+    // Expand/Collapse controls
+    // Single toggle for expand/collapse all
+    var allExpanded = false;
+    var btnToggleAll = $('btnToggleAll');
+    if (btnToggleAll) btnToggleAll.addEventListener('click', function(){
+      allExpanded = !allExpanded;
+      document.querySelectorAll('#tree_root a[role="treeitem"][aria-owns]').forEach(function(a){ a.setAttribute('aria-expanded', allExpanded ? 'true' : 'false'); });
+      var icon = btnToggleAll.querySelector('i');
+      if (icon) icon.className = allExpanded ? 'bi bi-arrows-angle-contract' : 'bi bi-arrows-angle-expand';
+      btnToggleAll.setAttribute('title', allExpanded ? 'Collapse all' : 'Expand all');
+    });
+    // Swap: btnCopy refreshes, btnRefresh copies
+    $('btnCopy').addEventListener('click', function(){ location.reload(); });
+    $('btnWrap').addEventListener('click', function(){
+      var ol = $('detail_ol');
+      if (!ol) return;
+      if (ol.classList.contains('wrap')) ol.classList.remove('wrap'); else ol.classList.add('wrap');
+    });
+    // Copy code handler on btnRefresh
+    var btnRefresh = document.getElementById('btnRefresh');
+    if (btnRefresh) btnRefresh.addEventListener('click', function(){
+      var ol = document.getElementById('detail_ol');
+      if (!ol) return;
+      var text = Array.prototype.map.call(ol.querySelectorAll('li'), function(li){ return li.textContent; }).join('\n');
+      function done(ok){
+        var icon = btnRefresh.querySelector('i');
+        if (ok){ icon.className = 'bi bi-clipboard-check'; btnRefresh.classList.add('btn-success'); }
+        else { icon.className = 'bi bi-clipboard-x'; btnRefresh.classList.add('btn-warning'); }
+        setTimeout(function(){ icon.className = 'bi bi-clipboard'; btnRefresh.classList.remove('btn-success','btn-warning'); }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){ done(true); }).catch(function(){ done(false); });
+      } else {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+          document.body.appendChild(ta); ta.select();
+          var ok = document.execCommand('copy');
+          document.body.removeChild(ta); done(!!ok);
+        } catch (e){ done(false); }
+      }
+    });
+
+    // Search/filter
+    $('treeSearch').addEventListener('input', function(){
+      var q = this.value.trim().toLowerCase();
+      var root = $('tree_root');
+      var items = Array.prototype.slice.call(root.querySelectorAll('a[role="treeitem"]'));
+      if (!q){
+        items.forEach(function(a){ a.parentElement.style.display = ''; });
+        return;
+      }
+      items.forEach(function(a){ a.parentElement.style.display = 'none'; });
+      items.forEach(function(a){
+        var text = a.textContent.trim().toLowerCase();
+        if (text.includes(q)){
+          a.parentElement.style.display = '';
+          // show ancestors
+          var p = a.parentElement.parentElement.previousElementSibling;
+          while (p && p.getAttribute && p.getAttribute('role') === 'treeitem'){
+            p.parentElement.style.display = '';
+            p.setAttribute('aria-expanded','true');
+            p = p.parentElement.parentElement.previousElementSibling;
+          }
+        }
+      });
+    });
+
+    // Fetch and render
+    fetch('/api/tree')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var roots = Array.isArray(data) ? data : [data];
+        var container = $('tree_root');
+        // Show spinner while building
+        container.innerHTML = '<div class="text-center my-2"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> Loading tree...</div>';
+        buildTree(container, roots);
+        attachInteractions(container);
+        var status = $('tree_status');
+        if (status){
+          var countFolders = 0, countFiles = 0;
+          (function walk(n){
+            if (Array.isArray(n)) return n.forEach(walk);
+            if (!n || typeof n !== 'object') return;
+            if (n.type === 'folder'){ countFolders++; if (Array.isArray(n.data)) n.data.forEach(walk); }
+            else countFiles++;
+          })(data);
+          status.textContent = 'Folders: ' + countFolders + ' • Files: ' + countFiles;
+        }
+        console.log('[tree.html] Rendered ARIA tree');
+      })
+      .catch(function(err){
+        console.error('[tree.html] Failed to load /api/tree', err);
+        var container = $('tree_root');
+        if (container){ container.innerHTML = '<li role="none">Failed to load tree.</li>'; }
+      });
+
+    function loadFile(path){
+      var loader = $('detail_loader');
+      var ol = $('detail_ol');
+      var md = $('detail_md');
+      var meta = $('detail_meta');
+      if (loader) loader.style.display = '';
+      if (ol) { ol.style.display = 'none'; ol.innerHTML = ''; }
+      if (md) { md.style.display = 'none'; md.innerHTML = ''; }
+      fetch('/api/file?path=' + encodeURIComponent(path))
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(res){
+          var content = res.content || '';
+          var lower = path.toLowerCase();
+          if (lower.endsWith('.md') && window.marked && md){
+            try {
+              md.innerHTML = marked.parse(content);
+              md.style.display = '';
+            } catch (e) {
+              renderCode(content);
+            }
+          } else if (lower.endsWith('.json')){
+            try { content = JSON.stringify(JSON.parse(content), null, 2); } catch (_) {}
+            renderCode(content);
+          } else {
+            renderCode(content);
+          }
+          function renderCode(text){
+            if (!ol) return;
+            var lines = text.split(/\r?\n/);
+            if (lines.length === 0) lines = [''];
+            lines.forEach(function(line){
+              var li = document.createElement('li');
+              li.textContent = line;
+              ol.appendChild(li);
+            });
+            ol.style.display = '';
+          }
+          if (meta) meta.textContent = (res.encoding ? ('Encoding: ' + res.encoding + (res.truncated ? ' • truncated' : '')) : '');
+        })
+        .catch(function(err){
+          if (md){ md.style.display = 'none'; }
+          if (ol){ ol.innerHTML = ''; var li = document.createElement('li'); li.textContent = 'Failed to load file: ' + err.message; ol.appendChild(li); ol.style.display = ''; }
+        })
+        .finally(function(){ if (loader) loader.style.display = 'none'; });
+    }
+  })();
+</script>
+{% endblock %}

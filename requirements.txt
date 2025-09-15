@@ -1,0 +1,5 @@
+# Project VizTree Dependencies
+click>=8.0.0
+fastapi>=0.68.0
+uvicorn>=0.15.0
+jinja2>=3.0.0
