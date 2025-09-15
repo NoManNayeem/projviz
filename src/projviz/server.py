@@ -87,6 +87,14 @@ def start_server(json_file: str, host: str = 'localhost', port: int = 8000):
             "request": request,
             "project_name": project_data["metadata"]["project_name"]
         })
+
+    @app.get("/uml")
+    async def get_uml(request: Request):
+        logger.info("GET /uml -> render uml.html")
+        return templates.TemplateResponse("uml.html", {
+            "request": request,
+            "project_name": project_data["metadata"]["project_name"]
+        })
     
     @app.get("/api/metadata")
     async def get_metadata():

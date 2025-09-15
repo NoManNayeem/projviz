@@ -77,6 +77,12 @@ projviz serve --json-file structure.json --port 8000
 
 The scan output uses two-space indentation and prefixes folders with `=` and files with `-` for easy reading. The UI shows a collapsible tree on the left and a file preview on the right with line numbers, copy button, and wrap toggle. Markdown files (e.g., `README.md`) render as formatted HTML for better readability.
 
+### UML Diagram
+
+- Click the `UML` nav button in the header or open `http://localhost:8000/uml` to view an auto-generated UML-style diagram of your project structure.
+- Boxes: folders (📁, gold stroke) and files (📄, blue stroke) are arranged by depth, with curved connectors to parents.
+- Controls: zoom in/out, reset; live counts of folders/files shown in the header.
+
 ## CLI Commands
 
 ### Scan Project Structure

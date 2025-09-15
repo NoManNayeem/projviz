@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}UML Diagram - {{ project_name }}{% endblock %}
+
+{% block header_title %}UML Diagram{% endblock %}
+
+{% block header_subtitle %}
+<p>Project: {{ project_name }}</p>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .uml-wrap { overflow: auto; width: 100%; height: calc(100vh - 180px); }
+  .uml-legend .badge { font-weight: 500; }
+  .uml-svg { background: var(--neu-bg); border-radius: 12px; box-shadow: var(--neu-shadow), var(--neu-highlight); }
+  .uml-node text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; font-size: 12px; }
+  .uml-node rect.folder { fill: rgba(255, 193, 7, 0.12); stroke: #ffc107; }
+  .uml-node rect.file { fill: rgba(13, 110, 253, 0.12); stroke: #0d6efd; }
+  .uml-link { stroke: rgba(108,117,125,.7); stroke-width: 1.2; }
+  .uml-node .label { dominant-baseline: middle; }
+  .uml-node .icon { font-size: 14px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card neu-surface shadow-sm">
+  <div class="card-header gradient-brand text-white d-flex align-items-center justify-content-between" style="box-shadow:none;">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-diagram-3"></i>
+      <span>Project UML</span>
+      <span id="uml_counts" class="badge rounded-pill bg-warning text-dark ms-2"></span>
+    </div>
+    <div class="btn-group btn-group-sm">
+      <button id="umlZoomIn" class="btn btn-light text-dark neu-btn" title="Zoom in"><i class="bi bi-zoom-in"></i></button>
+      <button id="umlZoomOut" class="btn btn-light text-dark neu-btn" title="Zoom out"><i class="bi bi-zoom-out"></i></button>
+      <button id="umlReset" class="btn btn-light text-dark neu-btn" title="Reset view"><i class="bi bi-aspect-ratio"></i></button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="uml-legend mb-2">
+      <span class="badge bg-warning text-dark me-2">📁 Folder</span>
+      <span class="badge bg-primary">📄 File</span>
+    </div>
+    <div class="uml-wrap">
+      <svg id="uml_svg" class="uml-svg" width="1200" height="600" role="img" aria-label="Project UML diagram"></svg>
+    </div>
+  </div>
+  <div class="card-footer text-muted small">
+    Tip: Use the controls to zoom/reset. Layout is auto‑generated per folder depth.
+  </div>
+  
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+
+  fetch('/api/tree').then(r => r.json()).then(data => {
+    const root = Array.isArray(data) ? data[0] : data;
+    const nodes = [];
+    const links = [];
+    let y = 20; const yGap = 36; const xGap = 240; let maxDepth = 0;
+    const stack = [{ node: root, depth: 0, parentId: null }];
+    while (stack.length){
+      const { node, depth, parentId } = stack.pop();
+      const id = String(node.id);
+      nodes.push({ id, label: node.value || node.path || id, type: node.type, depth, y });
+      if (parentId !== null) links.push({ from: parentId, to: id });
+      maxDepth = Math.max(maxDepth, depth);
+      y += yGap;
+      if (node.type === 'folder' && Array.isArray(node.data)){
+        for (let i = node.data.length - 1; i >= 0; i--){
+          stack.push({ node: node.data[i], depth: depth+1, parentId: id });
+        }
+      }
+    }
+
+    // Render SVG
+    const svg = $('uml_svg');
+    const width = (maxDepth + 1) * xGap + 60;
+    const height = Math.max(y + 20, 300);
+    svg.setAttribute('width', width);
+    svg.setAttribute('height', height);
+
+    const idToPos = {};
+    nodes.forEach(n => { idToPos[n.id] = { x: 30 + n.depth * xGap, y: n.y }; });
+
+    // Links first
+    links.forEach(l => {
+      const p1 = idToPos[l.from]; const p2 = idToPos[l.to];
+      if (!p1 || !p2) return;
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const x1 = p1.x + 110, y1 = p1.y + 14; // right middle of parent box
+      const x2 = p2.x - 10, y2 = p2.y + 14; // left middle of child box
+      const mx = (x1 + x2)/2;
+      path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+      path.setAttribute('class','uml-link');
+      svg.appendChild(path);
+    });
+
+    // Nodes
+    nodes.forEach(n => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+      g.setAttribute('class','uml-node');
+      const x = idToPos[n.id].x, yy = idToPos[n.id].y;
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', x);
+      rect.setAttribute('y', yy);
+      rect.setAttribute('rx', 6);
+      rect.setAttribute('ry', 6);
+      rect.setAttribute('width', 220);
+      rect.setAttribute('height', 28);
+      rect.setAttribute('class', n.type === 'folder' ? 'folder' : 'file');
+
+      const icon = document.createElementNS('http://www.w3.org/2000/svg','text');
+      icon.setAttribute('x', x + 10);
+      icon.setAttribute('y', yy + 18);
+      icon.setAttribute('class', 'icon');
+      icon.textContent = n.type === 'folder' ? '📁' : '📄';
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+      text.setAttribute('x', x + 28);
+      text.setAttribute('y', yy + 18);
+      text.setAttribute('class','label');
+      text.textContent = n.label;
+
+      g.appendChild(rect);
+      g.appendChild(icon);
+      g.appendChild(text);
+      svg.appendChild(g);
+    });
+
+    // Counts
+    const countFolders = nodes.filter(n => n.type === 'folder').length;
+    const countFiles = nodes.filter(n => n.type !== 'folder').length;
+    const badge = $('uml_counts');
+    if (badge){ badge.innerHTML = '<i class="bi bi-folder-fill me-1"></i>' + countFolders + ' <span class="mx-1">•</span> <i class="bi bi-file-earmark me-1"></i>' + countFiles; }
+
+    // Zoom controls
+    let currentScale = 1;
+    function applyScale(){ svg.style.transform = `scale(${currentScale})`; svg.style.transformOrigin = '0 0'; }
+    $('umlZoomIn').addEventListener('click', () => { currentScale = Math.min(2, currentScale + 0.1); applyScale(); });
+    $('umlZoomOut').addEventListener('click', () => { currentScale = Math.max(0.5, currentScale - 0.1); applyScale(); });
+    $('umlReset').addEventListener('click', () => { currentScale = 1; applyScale(); });
+  }).catch(() => {
+    const svg = $('uml_svg');
+    if (svg){ svg.outerHTML = '<div class="alert alert-danger">Failed to load UML data</div>'; }
+  });
+})();
+</script>
+{% endblock %}
+
