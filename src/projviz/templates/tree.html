@@ -343,6 +343,8 @@
             if (n.type === 'folder'){ countFolders++; if (Array.isArray(n.data)) n.data.forEach(walk); }
             else countFiles++;
           })(data);
+          var hdrCounts = document.getElementById('tree_counts');
+          if (hdrCounts){ hdrCounts.innerHTML = '<i class="bi bi-folder-fill me-1"></i>' + countFolders + ' <span class="mx-1">•</span> <i class="bi bi-file-earmark me-1"></i>' + countFiles; }
           status.textContent = 'Folders: ' + countFolders + ' • Files: ' + countFiles;
         }
         console.log('[tree.html] Rendered ARIA tree');
